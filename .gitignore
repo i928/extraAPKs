@@ -1,0 +1,7 @@
+*.apk
+*.apks
+excluded/
+extra-apps/
+extra-apps-official/
+ksud_prebuilt/
+busybox
