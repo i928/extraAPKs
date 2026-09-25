@@ -74,6 +74,30 @@ declare -A PRESERVE_SIGNATURE_APPS=(["RevancedManagerPlus"]=1)
 # dedicated cert instead.
 declare -A CUSTOM_CERTIFICATE_APPS=(["KernelSUNext"]="ksu_manager_cert")
 
+# A free-text note emitted inside a module's own block, for cases where the
+# generated Android.bp would otherwise look incomplete. KernelSUNext is the one
+# such case: its native helper libksud.so is installed by a PRODUCT_COPY_FILES
+# line in each device.mk (to /product/app/KernelSUNext/lib/arm64/), NOT by a
+# Soong "required:" dependency -- an earlier cc_prebuilt_binary attempt was
+# rejected because relative_install_path may not escape the module's install
+# dir. Without this note the missing "required:" reads like an oversight.
+declare -A MODULE_NOTES=(["KernelSUNext"]=$'    // libksud.so gets shipped separately via PRODUCT_COPY_FILES in device.mk,\n    // not a Soong "required" module -- see the comment there.')
+
+# ksu_script.sh (a boot script run by sunfish's ksu-autoinstall) bind-mounts an
+# empty dir over every app in this directory, so the ROM copy disappears and a
+# newer version can be installed as a normal user app -- a baked-in system app
+# can otherwise only be upgraded by an apk signed with the same key, which the
+# resigned ones here never are. run.sh regenerates the hide_path lines from the
+# apks present, replacing the hide_path calls in the ksu_script.sh template.
+# Not hidden:
+#   RevancedManagerPlus: keeps its own signature, so it upgrades in place.
+#   KernelSUNext: the kernel only trusts a manager with this build's own cert
+#     (see CUSTOM_CERTIFICATE_APPS), so hiding it leaves no usable manager.
+# .apks app sets (Gboard, Line) are not hidden either: Gboard replaces LatinIME,
+# so hiding it leaves the device with no keyboard.
+declare -A HIDE_EXCLUDED=(["RevancedManagerPlus"]=1 ["KernelSUNext"]=1)
+HIDE_LINES=""
+
 # Ensure Android Build Tools (aapt2) are accessible
 if ! command -v aapt2 &> /dev/null; then
     # Fallback to look inside your active AOSP source tree environment if not in path
@@ -160,7 +184,7 @@ for apk in *.apk; do
     fi
     echo "📌 Package ID resolved: $package_name"
     # remove prepackage app from android
-    adb uninstall $package_name  || true
+    #adb uninstall $package_name  || true
     # Copy the binary to the destination tree
     cp "$apk" "$OUTPUT_DIR/prebuilt/$filename"
 
@@ -269,6 +293,11 @@ for apk in *.apk; do
         multilib_line=$'\n    compile_multilib: "64",'
     fi
 
+    note_line=""
+    if [ -n "${MODULE_NOTES[$module_name]:-}" ]; then
+        note_line=$'\n'"${MODULE_NOTES[$module_name]:-}"
+    fi
+
     # 3. Append to the centralized Soong Android.bp
     cat << EOF >> "$OUTPUT_DIR/prebuilt/Android.bp"
 
@@ -279,7 +308,7 @@ android_app_import {
     product_specific: true,${uses_libs_line}${optional_uses_libs_line}${multilib_line}
     dex_preopt: {
         enabled: $dex_preopt_enabled,
-    },
+    },${note_line}
 }
 EOF
 
@@ -288,6 +317,12 @@ EOF
     cat << EOF >> "$OUTPUT_DIR/sepolicy/file_contexts"
 /product/app/$module_name(/.*)?          u:object_r:system_file:s0
 EOF
+
+    if [ -z "${HIDE_EXCLUDED[$module_name]:-}" ]; then
+        app_dir=app
+        [ "$privileged_val" = true ] && app_dir=priv-app
+        HIDE_LINES+="hide_path /product/$app_dir/$module_name /dev/empty_$module_name"$'\n'
+    fi
 
     # 5. If this module needs a privapp-permissions allowlist, copy it in and
     # emit a prebuilt_etc module for it (installs to /product/etc/permissions/).
@@ -385,6 +420,180 @@ cc_prebuilt_binary {
 }
 EOF
 fi
+
+# 2c. Precopy: every apk in copy/ ships in /product/etc/precopy/ and is copied
+# to Download/precopy/ on the device at boot (scripts/precopy.sh), so it can be
+# installed without downloading it. prebuilt_etc, not PRODUCT_COPY_FILES: the
+# build refuses .apk files there ("Prebuilt apk found in PRODUCT_COPY_FILES").
+# The source is renamed to its module name so device.mk can derive the module
+# name from the filename; `filename` restores the original name on the device.
+mkdir -p "$OUTPUT_DIR/prebuilt/precopy"
+for apk in copy/*.apk; do
+    [ -s "$apk" ] || continue
+    filename=$(basename -- "$apk")
+    module_base=$(echo "${filename%.*}" | sed -e 's/[^a-zA-Z0-9_]/_/g')
+    echo "------------------------------------------------"
+    echo "📥 Precopy: $filename"
+    cp "$apk" "$OUTPUT_DIR/prebuilt/precopy/$module_base.apk"
+    cat << EOF >> "$OUTPUT_DIR/prebuilt/Android.bp"
+
+prebuilt_etc {
+    name: "precopy_$module_base",
+    src: "precopy/$module_base.apk",
+    filename: "$filename",
+    sub_dir: "precopy",
+    product_specific: true,
+}
+EOF
+done
+
+# 2c'. User apps: every apk in install/ ships untouched in
+# /product/etc/install-apps/ and is installed as a normal user app (pm install)
+# on the device once setup wizard is done (scripts/install-apps.sh). Unlike the
+# system apps above, these keep the developer's own signature, so Play (or a
+# newer apk) updates them in place. A baked-in system app that had to be
+# resigned (compressed JNI libs, see above) can never take the real update
+# without being uninstalled first, which a system app cannot be.
+mkdir -p "$OUTPUT_DIR/prebuilt/install-apps"
+for apk in install/*.apk; do
+    [ -s "$apk" ] || continue
+    filename=$(basename -- "$apk")
+    module_base=$(echo "${filename%.*}" | sed -e 's/[^a-zA-Z0-9_]/_/g')
+    echo "------------------------------------------------"
+    echo "📲 Install as user app: $filename"
+    cp "$apk" "$OUTPUT_DIR/prebuilt/install-apps/$module_base.apk"
+    cat << EOF >> "$OUTPUT_DIR/prebuilt/Android.bp"
+
+prebuilt_etc {
+    name: "userapp_$module_base",
+    src: "install-apps/$module_base.apk",
+    filename: "$filename",
+    sub_dir: "install-apps",
+    product_specific: true,
+}
+EOF
+done
+
+# 2d. Boot scripts for sunfish's ksu-autoinstall (run on every boot from
+# /product/etc/ksu-autoinstall/scripts/); publish.sh copies them into
+# device/google/sunfish/ksu-autoinstall/scripts/.
+mkdir -p "$OUTPUT_DIR/scripts"
+HIDE_LINES="$HIDE_LINES" awk '
+    /^hide_path \// { if (!done) { printf "%s", ENVIRON["HIDE_LINES"]; done = 1 } next }
+    { print }
+    END { if (!done) exit 1 }
+' ksu_script.sh > "$OUTPUT_DIR/scripts/ksu_script.sh" || {
+    echo "❌ Error: ksu_script.sh has no hide_path calls to replace"; exit 1; }
+echo "------------------------------------------------"
+echo "🙈 ksu_script.sh hides:"
+printf '%s' "$HIDE_LINES" | sed 's/^/     /'
+
+cat << 'EOF' > "$OUTPUT_DIR/scripts/precopy.sh"
+#!/system/bin/sh
+#
+# Copy the apks this ROM ships in /product/etc/precopy/ to Download/precopy/,
+# so they can be installed without downloading them. Generated by
+# ~/extraAPKs/run.sh from its copy/ directory.
+#
+# Run on every boot by ksu-autoinstall.sh. Each apk is copied once per wipe
+# (the marker lives in /data/adb), so one the user deleted stays deleted, and
+# a new filename -- e.g. a version bump -- is copied again.
+(
+SRC=/product/etc/precopy
+DL=/data/media/0/Download
+DST=$DL/precopy
+STATE=/data/adb/.ksu-autoinstall
+LOG=/data/adb/ksu-autoinstall.log
+
+[ -d "$SRC" ] || exit 0
+
+# /data/media/0 is file-based-encrypted until user 0 unlocks, and Download
+# only appears once the media stack has created it: wait on a fresh wipe.
+i=0
+while [ ! -d "$DL" ] && [ "$i" -lt 300 ]; do
+	sleep 2
+	i=$((i + 1))
+done
+[ -d "$DL" ] || exit 0
+mkdir -p "$STATE" "$DST" || exit 0
+
+# Match Download's owner, or the media stack (and so file managers) may not be
+# able to read what root wrote.
+owner=$(stat -c %u:%g "$DL")
+chown "$owner" "$DST"
+chmod 0771 "$DST"
+
+for apk in "$SRC"/*.apk; do
+	[ -f "$apk" ] || continue
+	name=${apk##*/}
+	[ -f "$STATE/precopy-$name.done" ] && continue
+	if cp "$apk" "$DST/$name.tmp" && mv "$DST/$name.tmp" "$DST/$name"; then
+		chown "$owner" "$DST/$name"
+		chmod 0664 "$DST/$name"
+		: > "$STATE/precopy-$name.done"
+		echo "$(date) precopied $name" >> "$LOG"
+	else
+		rm -f "$DST/$name.tmp"
+		echo "$(date) FAILED to precopy $name" >> "$LOG"
+	fi
+done
+restorecon -R "$DST" 2>/dev/null
+) </dev/null >/dev/null 2>&1 &
+EOF
+
+cat << 'EOF' > "$OUTPUT_DIR/scripts/install-apps.sh"
+#!/system/bin/sh
+#
+# Install the apks this ROM ships in /product/etc/install-apps/ as normal user
+# apps, once setup wizard is done. Generated by ~/extraAPKs/run.sh from its
+# install/ directory. They keep their own signature, so they update normally.
+#
+# Run on every boot by ksu-autoinstall.sh. Each apk is installed once per wipe
+# (marker in /data/adb); a failed install retries on the next boot. An app the
+# user already has at the same or a newer version counts as done.
+(
+SRC=/product/etc/install-apps
+STATE=/data/adb/.ksu-autoinstall
+LOG=/data/adb/ksu-autoinstall.log
+log() {
+	echo "$(date +%H:%M:%S) - $*" >> "$LOG"
+}
+
+[ -d "$SRC" ] || exit 0
+mkdir -p "$STATE" || exit 0
+
+pending=0
+for apk in "$SRC"/*.apk; do
+	[ -f "$STATE/userapp-${apk##*/}.done" ] || pending=$((pending + 1))
+done
+[ "$pending" -gt 0 ] || exit 0
+
+# Installing during setup wizard competes with it (and the first boot after a
+# wipe reboots right after boot_completed to activate the KernelSU modules).
+while [ "$(settings get global device_provisioned 2>/dev/null)" != "1" ]; do
+	sleep 5
+done
+log "[USER APPS] Installing $pending app(s) from $SRC..."
+
+for apk in "$SRC"/*.apk; do
+	[ -f "$apk" ] || continue
+	name=${apk##*/}
+	[ -f "$STATE/userapp-$name.done" ] && continue
+	out=$(pm install -r --user 0 "$apk" 2>&1)
+	case "$out" in
+		*Success*)
+			: > "$STATE/userapp-$name.done"
+			log "[USER APP] Installed $name" ;;
+		*VERSION_DOWNGRADE*|*UPDATE_INCOMPATIBLE*)
+			: > "$STATE/userapp-$name.done"
+			log "[USER APP] $name: user already has its own install ($out)" ;;
+		*)
+			log "[FAILED] User app $name: $out" ;;
+	esac
+done
+log "[USER APPS] Done."
+) </dev/null >/dev/null 2>&1 &
+EOF
 
 # 5. Create the companion companion SELinux build bridge
 cat << 'EOF' > "$OUTPUT_DIR/sepolicy/Android.mk"
