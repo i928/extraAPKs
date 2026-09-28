@@ -10,7 +10,7 @@ OUTPUT_DIR="extra-apps"
 # property of the specific binary, not the device or build config, so it will
 # reproduce identically anywhere these same APKs are built. dex_preopt must be
 # disabled for these or the whole ninja build aborts.
-DEX_PREOPT_DISABLED=("FreeNovel" "sogou" "Gboard" "message" "kasa" "reddit" "tether" "messenger" )
+DEX_PREOPT_DISABLED=("freenovel" "sogou" "Gboard" "message" "kasa" "reddit" "tether" "messenger" )
 
 # Per-module overrides for properties that can't be derived from the APK itself
 # (policy decisions, not manifest facts).
@@ -313,7 +313,8 @@ for apk in *.apk; do
 
     dex_preopt_enabled="true"
     for bad in "${DEX_PREOPT_DISABLED[@]}"; do
-        if [ "$module_name" = "$bad" ]; then
+        # case-insensitive: renaming FreeNovel.apk to freenovel.apk silently re-enabled preopt
+        if [ "${module_name,,}" = "${bad,,}" ]; then
             echo "⚠️  $filename is a known dex2oatd verifier hard-failure; disabling dex_preopt"
             dex_preopt_enabled="false"
             break
