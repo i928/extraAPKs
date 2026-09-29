@@ -25,7 +25,12 @@ DEX_PREOPT_DISABLED=("freenovel" "sogou" "Gboard" "message" "kasa" "reddit" "tet
 #   both. Install the official apk post-boot via `adb install` instead.
 #   add xml file to fix issues
 #declare -A PRIVILEGED_APPS=(["Gboard"]=1)
-declare -A OVERRIDES_APPS=(["Gboard"]="LatinIME" ["message"]="messaging")
+# filemanager (File Manager+) replaces the system Files app / document picker:
+# the picker in this ROM is gms DocumentsUIGoogle (which itself overrides AOSP
+# DocumentsUI), so that is the module to override. File Manager+ then is the only
+# OPEN_DOCUMENT handler and gets the SYSTEM_DOCUMENT_MANAGER role -- with both
+# present the role has no holder and saving through the picker crashes.
+declare -A OVERRIDES_APPS=(["Gboard"]="LatinIME" ["message"]="messaging" ["filemanager"]="DocumentsUIGoogle")
 
 # Modules needing a /product/etc/permissions/privapp-permissions-*.xml allowlist
 # (required for ANY privileged app requesting signature|privileged permissions --
