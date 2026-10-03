@@ -49,10 +49,10 @@ TREES=(
 # dropping it from this list once its kernel carries the 3.4 driver
 # (crosshatch: dropped 2026-10-02, kernel ksu34-test + device ksu34;
 # lin23 lmi: dropped 2026-10-02, kernel + device branch ksu34;
-# evo lmi: dropped 2026-10-02, kernel erofs-missing-includes + device evo-a16).
+# evo lmi and lin22 lmi: dropped 2026-10-02. The list is empty now: every
+# tree runs the 3.4 driver. Kept for a tree that ever needs UAPI 2 again.)
 UAPI2_MANAGER=KernelSUNext-uapi2.apk
 UAPI2_TREES=(
-    /home/android/lin22/device/xiaomi/lmi/extra-apps
 )
 is_uapi2() { local t; for t in "${UAPI2_TREES[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
 
