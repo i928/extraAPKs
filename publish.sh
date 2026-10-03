@@ -47,12 +47,12 @@ TREES=(
 # name must stay KernelSUNext: Soong installs to /product/app/<module>/, where
 # each device's ksud_prebuilt (3.3) is placed. Move a tree to UAPI 4 by
 # dropping it from this list once its kernel carries the 3.4 driver
-# (crosshatch: dropped 2026-10-02, kernel ksu34-test + device ksu34).
+# (crosshatch: dropped 2026-10-02, kernel ksu34-test + device ksu34;
+# lin23 lmi: dropped 2026-10-02, kernel + device branch ksu34).
 UAPI2_MANAGER=KernelSUNext-uapi2.apk
 UAPI2_TREES=(
     /home/android/evo-11.9/device/xiaomi/lmi/extra-apps
     /home/android/lin22/device/xiaomi/lmi/extra-apps
-    /home/android/lin23/device/xiaomi/lmi/extra-apps
 )
 is_uapi2() { local t; for t in "${UAPI2_TREES[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
 
