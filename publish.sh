@@ -67,7 +67,6 @@ is_uapi2() { local t; for t in "${UAPI2_TREES[@]}"; do [ "$t" = "$1" ] && return
 UAPI4_MANAGER=managers/KernelSUNext-uapi4.apk
 UAPI4_TREES=(
     /home/android/evo-11.9/device/xiaomi/lmi/extra-apps
-    /home/android/lin22/device/google/crosshatch/prebuilts/extra-apps
     /home/android/lin22/device/xiaomi/lmi/extra-apps
     /home/android/lin23/device/xiaomi/lmi/extra-apps
 )
