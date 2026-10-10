@@ -51,13 +51,31 @@ TREES=(
 # lin23 lmi: dropped 2026-10-02, kernel + device branch ksu34;
 # evo lmi and lin22 lmi: dropped 2026-10-02. The list is empty now: every
 # tree runs the 3.4 driver. Kept for a tree that ever needs UAPI 2 again.)
-UAPI2_MANAGER=KernelSUNext-uapi2.apk
+# Alternate managers live in managers/: run.sh turns every ./*.apk into an app
+# module, and a second dev.i928.mgr apk there would ship as a duplicate package.
+UAPI2_MANAGER=managers/KernelSUNext-uapi2.apk
 UAPI2_TREES=(
 )
 is_uapi2() { local t; for t in "${UAPI2_TREES[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
 
+# Trees whose kernel runs KernelSU-Next UAPI 4 (3.4.0 driver). KernelSUNext.apk is
+# the 3.4.1 manager (UAPI 5, 2026-10-10), which needs the uapi5 driver; these trees
+# keep the 3.4.0 manager (KernelSUNext-uapi4.apk, versionCode 33296) until their
+# kernel is bumped -- then drop the tree from this list. Their ksud_prebuilt must
+# match too (3.4.0 ksud with a UAPI-4 kernel). sunfish moved to 3.4.1 first
+# (kernel + device branch ksu-3.4.1).
+UAPI4_MANAGER=managers/KernelSUNext-uapi4.apk
+UAPI4_TREES=(
+    /home/android/evo-11.9/device/xiaomi/lmi/extra-apps
+    /home/android/lin22/device/google/crosshatch/prebuilts/extra-apps
+    /home/android/lin22/device/xiaomi/lmi/extra-apps
+    /home/android/lin23/device/xiaomi/lmi/extra-apps
+)
+is_uapi4() { local t; for t in "${UAPI4_TREES[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
+
 [ -d "$SRC" ] || { echo "!! $SRC missing -- run ./run.sh first"; exit 1; }
 [ -s "$UAPI2_MANAGER" ] || { echo "!! $UAPI2_MANAGER missing (3.3 manager for UAPI-2 kernels)"; exit 1; }
+[ -s "$UAPI4_MANAGER" ] || { echo "!! $UAPI4_MANAGER missing (3.4.0 manager for UAPI-4 kernels)"; exit 1; }
 
 # Refuse to swap files under a running build: the trees are inputs to Soong, and
 # replacing an APK mid-build yields a corrupt or half-stale image. soong_ui runs
@@ -87,7 +105,7 @@ same_fs() { [ "$(stat -L -c %d "$OFF")" = "$(stat -L -c %d "$(dirname "$1")")" ]
 # 3.4 one, whose mtime was older, and the OTA still carried 3.3). So every file
 # whose content changes gets the current time:
 #   - files that differ between run.sh's output and the promoted copy
-#   - each tree's KernelSUNext.apk when its content changes (UAPI-2 swap)
+#   - each tree's KernelSUNext.apk when its content changes (UAPI-2/UAPI-4 swap)
 changed=$(rsync -ai --checksum --dry-run "$SRC/" "$OFF/" | awk '$1 ~ /^>f/ {print $2}')
 declare -A PREV_MGR
 for d in "${TREES[@]}"; do
@@ -127,6 +145,13 @@ for d in "${UAPI2_TREES[@]}"; do
     rm -f "$d/prebuilt/KernelSUNext.apk"
     cp -p "$UAPI2_MANAGER" "$d/prebuilt/KernelSUNext.apk"
     echo "  3.3 manager: $d"
+done
+echo "==> UAPI-4 manager (3.4.0)"
+for d in "${UAPI4_TREES[@]}"; do
+    [ -f "$d/prebuilt/KernelSUNext.apk" ] || continue
+    rm -f "$d/prebuilt/KernelSUNext.apk"
+    cp -p "$UAPI4_MANAGER" "$d/prebuilt/KernelSUNext.apk"
+    echo "  3.4.0 manager: $d"
 done
 # A tree whose manager content changed (either direction) gets a fresh mtime.
 for d in "${TREES[@]}"; do
@@ -183,6 +208,13 @@ for d in "${TREES[@]}"; do
         else
             echo "  !! DIFFERS  $d"; fail=1
         fi
+    elif is_uapi4 "$d"; then
+        if diff -rq --exclude=KernelSUNext.apk "$d" "$OFF" >/dev/null 2>&1 &&
+           cmp -s "$d/prebuilt/KernelSUNext.apk" "$UAPI4_MANAGER"; then
+            echo "  IDENTICAL  $d  (+3.4.0 manager)"
+        else
+            echo "  !! DIFFERS  $d"; fail=1
+        fi
     elif diff -rq "$d" "$OFF" >/dev/null 2>&1; then
         echo "  IDENTICAL  $d"
     else
@@ -191,7 +223,7 @@ for d in "${TREES[@]}"; do
 done
 # Every APK should carry one link per hardlinked copy: official + the same-fs trees.
 want=$(( 1 + linked ))
-# KernelSUNext.apk is excluded: the UAPI-2 trees hold their own copy of it.
+# KernelSUNext.apk is excluded: the UAPI-2/UAPI-4 trees hold their own copy of it.
 bad=$(ls "$OFF"/prebuilt/*.apk | grep -v '/KernelSUNext\.apk$' | xargs stat -c %h | grep -vc "^${want}$" || true)
 echo "  APKs not at link count $want: $bad"
 [ "$bad" = 0 ] || fail=1
