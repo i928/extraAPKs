@@ -38,6 +38,7 @@ TREES=(
     /home/android/lin22/device/google/crosshatch/prebuilts/extra-apps
     /home/android/lin22/device/xiaomi/lmi/extra-apps
     /home/android/lin23/device/xiaomi/lmi/extra-apps
+    /home/android/lin23/device/google/crosshatch/prebuilts/extra-apps
 )
 
 # Trees whose kernel runs KernelSU-Next UAPI 2 (3.3 driver). The 3.4 manager
