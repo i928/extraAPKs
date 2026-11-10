@@ -34,6 +34,7 @@ SRC=extra-apps
 OFF=extra-apps-official
 TREES=(
     /home/android/evo-11.9/device/google/sunfish/prebuilts/extra-apps
+    /home/android/evo-11.9/device/google/crosshatch/prebuilts/extra-apps
     /home/android/evo-11.9/device/xiaomi/lmi/extra-apps
     /home/android/lin22/device/google/crosshatch/prebuilts/extra-apps
     /home/android/lin22/device/xiaomi/lmi/extra-apps
@@ -41,6 +42,17 @@ TREES=(
     /home/android/lin23/device/google/crosshatch/prebuilts/extra-apps
     /home/android/lin23/device/google/sunfish/prebuilts/extra-apps
 )
+
+# Trees that take a device variant of the apps (run.sh VARIANTS): they link
+# extra-apps-official-<variant> instead of extra-apps-official. Moving a tree
+# between variants: its changed files must end up with a newer mtime than before
+# (see the mtime note below). run.sh output always is; an older promoted copy may
+# not be, so touch the changed files in that case.
+declare -A TREE_VARIANT=(
+    [/home/android/lin23/device/google/crosshatch/prebuilts/extra-apps]=crosshatch
+)
+off_of() { local v=${TREE_VARIANT[$1]:-}; if [ -n "$v" ]; then echo "$OFF-$v"; else echo "$OFF"; fi; }
+VARIANTS=($(printf '%s\n' "${TREE_VARIANT[@]}" | sort -u))
 
 # Trees whose kernel runs KernelSU-Next UAPI 2 (3.3 driver). The 3.4 manager
 # (KernelSUNext.apk, UAPI 4) shows "Unsupported" there, so these trees get
@@ -74,6 +86,9 @@ UAPI4_TREES=(
 is_uapi4() { local t; for t in "${UAPI4_TREES[@]}"; do [ "$t" = "$1" ] && return 0; done; return 1; }
 
 [ -d "$SRC" ] || { echo "!! $SRC missing -- run ./run.sh first"; exit 1; }
+for v in "${VARIANTS[@]}"; do
+    [ -d "$SRC-$v" ] || { echo "!! $SRC-$v missing -- run ./run.sh first"; exit 1; }
+done
 [ -s "$UAPI2_MANAGER" ] || { echo "!! $UAPI2_MANAGER missing (3.3 manager for UAPI-2 kernels)"; exit 1; }
 [ -s "$UAPI4_MANAGER" ] || { echo "!! $UAPI4_MANAGER missing (3.4.0 manager for UAPI-4 kernels)"; exit 1; }
 
@@ -106,34 +121,40 @@ same_fs() { [ "$(stat -L -c %d "$OFF")" = "$(stat -L -c %d "$(dirname "$1")")" ]
 # whose content changes gets the current time:
 #   - files that differ between run.sh's output and the promoted copy
 #   - each tree's KernelSUNext.apk when its content changes (UAPI-2/UAPI-4 swap)
-changed=$(rsync -ai --checksum --dry-run "$SRC/" "$OFF/" | awk '$1 ~ /^>f/ {print $2}')
 declare -A PREV_MGR
 for d in "${TREES[@]}"; do
     PREV_MGR[$d]=$(sha256sum "$d/prebuilt/KernelSUNext.apk" 2>/dev/null | cut -c1-64)
 done
 
-echo "==> promoting $SRC -> $OFF"
-# --checksum --no-times: files with unchanged content are left alone (their
-# mtime too); plain -a would reset an unchanged file's mtime to run.sh's
-# older copy, which is how the fix below got undone the first time.
-rsync -a --no-times --checksum --delete "$SRC/" "$OFF/"
-for f in $changed; do touch "$OFF/$f"; echo "  changed, mtime now: $f"; done
+promote() { # run.sh output, promoted copy
+    local changed f
+    changed=$(rsync -ai --checksum --dry-run "$1/" "$2/" 2>/dev/null | awk '$1 ~ /^>f/ {print $2}')
+    echo "==> promoting $1 -> $2"
+    # --checksum --no-times: files with unchanged content are left alone (their
+    # mtime too); plain -a would reset an unchanged file's mtime to run.sh's
+    # older copy, which is how the fix below got undone the first time.
+    rsync -a --no-times --checksum --delete "$1/" "$2/"
+    for f in $changed; do touch "$2/$f"; echo "  changed, mtime now: $f"; done
+}
+promote "$SRC" "$OFF"
+for v in "${VARIANTS[@]}"; do promote "$SRC-$v" "$OFF-$v"; done
 
 echo "==> re-linking device trees"
-linked=0
+declare -A LINKED
 for d in "${TREES[@]}"; do
     [ -d "$(dirname "$d")" ] || { echo "  SKIP (no parent): $d"; continue; }
+    o=$(off_of "$d")
     if same_fs "$d"; then
         # Build the new link farm beside the old one and swap, so a failure
         # partway never leaves the tree without an extra-apps dir.
         rm -rf "$d.new"
-        cp -al "$OFF" "$d.new"
+        cp -al "$o" "$d.new"
         rm -rf "$d"
         mv "$d.new" "$d"
-        linked=$((linked + 1))
-        echo "  linked: $d"
+        LINKED[$o]=$(( ${LINKED[$o]:-0} + 1 ))
+        echo "  linked: $d${TREE_VARIANT[$d]:+  ($o)}"
     else
-        rsync -a --delete "$OFF/" "$d/"
+        rsync -a --delete "$o/" "$d/"
         echo "  copied (other filesystem): $d"
     fi
 done
@@ -170,7 +191,7 @@ for d in "${TREES[@]}"; do
     dst=$(dirname "$(dirname "$d")")/ksu-autoinstall/scripts
     [ "$(basename "$(dirname "$d")")" = prebuilts ] || dst=$(dirname "$d")/ksu-autoinstall/scripts
     [ -d "$dst" ] || continue
-    for f in "$OFF"/scripts/*.sh; do
+    for f in "$(off_of "$d")"/scripts/*.sh; do
         [ -f "$f" ] || continue
         cp "$f" "$dst/"
         echo "  copied: $dst/${f##*/}"
@@ -201,32 +222,35 @@ echo "==> verify"
 fail=0
 for d in "${TREES[@]}"; do
     [ -d "$d" ] || continue
+    o=$(off_of "$d")
     if is_uapi2 "$d"; then
-        if diff -rq --exclude=KernelSUNext.apk "$d" "$OFF" >/dev/null 2>&1 &&
+        if diff -rq --exclude=KernelSUNext.apk "$d" "$o" >/dev/null 2>&1 &&
            cmp -s "$d/prebuilt/KernelSUNext.apk" "$UAPI2_MANAGER"; then
             echo "  IDENTICAL  $d  (+3.3 manager)"
         else
             echo "  !! DIFFERS  $d"; fail=1
         fi
     elif is_uapi4 "$d"; then
-        if diff -rq --exclude=KernelSUNext.apk "$d" "$OFF" >/dev/null 2>&1 &&
+        if diff -rq --exclude=KernelSUNext.apk "$d" "$o" >/dev/null 2>&1 &&
            cmp -s "$d/prebuilt/KernelSUNext.apk" "$UAPI4_MANAGER"; then
             echo "  IDENTICAL  $d  (+3.4.0 manager)"
         else
             echo "  !! DIFFERS  $d"; fail=1
         fi
-    elif diff -rq "$d" "$OFF" >/dev/null 2>&1; then
-        echo "  IDENTICAL  $d"
+    elif diff -rq "$d" "$o" >/dev/null 2>&1; then
+        echo "  IDENTICAL  $d${TREE_VARIANT[$d]:+  ($o)}"
     else
         echo "  !! DIFFERS  $d"; fail=1
     fi
 done
 # Every APK should carry one link per hardlinked copy: official + the same-fs trees.
-want=$(( 1 + linked ))
-# KernelSUNext.apk is excluded: the UAPI-2/UAPI-4 trees hold their own copy of it.
-bad=$(ls "$OFF"/prebuilt/*.apk | grep -v '/KernelSUNext\.apk$' | xargs stat -c %h | grep -vc "^${want}$" || true)
-echo "  APKs not at link count $want: $bad"
-[ "$bad" = 0 ] || fail=1
+for o in "$OFF" "${VARIANTS[@]/#/$OFF-}"; do
+    want=$(( 1 + ${LINKED[$o]:-0} ))
+    # KernelSUNext.apk is excluded: the UAPI-2/UAPI-4 trees hold their own copy of it.
+    bad=$(ls "$o"/prebuilt/*.apk "$o"/prebuilt/*.apks 2>/dev/null | grep -v '/KernelSUNext\.apk$' | xargs stat -c %h | grep -vc "^${want}$" || true)
+    echo "  $o: APKs not at link count $want: $bad"
+    [ "$bad" = 0 ] || fail=1
+done
 
 df -h /home /build 2>/dev/null | tail -n +2 | awk '{print "  "$6": "$4" free"}'
 exit $fail

@@ -183,10 +183,46 @@ extract_jni_libs() {
     echo "   unpacked $(ls "$OUTPUT_DIR/prebuilt/jni/$mod/$isa" | wc -l) $abi libs"
 }
 
-echo "🚀 Starting User APK extraction and conversion pipeline..."
+# Device variants: <dir>/ holds apks that, for that device only, replace the shared
+# app of the same module name (or add one). Each variant gets its own output,
+# extra-apps-<dir>, which publish.sh links into that device's trees (TREE_VARIANT).
+#   crosshatch/: current Play versions of apps Play had moved to /data on the Pixel 3
+#     XL, so they run from EROFS again (2026-11-09: about 8% faster cold start when
+#     read from storage, frees /data, no reinstall after a fresh flash). Split apps
+#     are .apks sets built from the phone's pulled splits with
+#     excluded/build_apks_from_splits.py. Only a STRICTLY newer version replaces a
+#     /data copy on a phone that has one. Space is tight: about 250 MB was left in
+#     crosshatch's dynamic partitions (~/ksu/crosshatch-performance-scope.md).
+VARIANTS=(crosshatch)
+
+module_of() { local b; b=$(basename -- "$1"); b=${b%.*}; echo "$b" | sed -e 's/[^a-zA-Z0-9_]/_/g'; }
+
+# The apps of one output, one per line: every ./*.apk and ./*.apks except the
+# modules overlay dir $1 replaces, then the overlay's own. $1 is empty for the
+# shared output.
+inputs() {
+    local f
+    for f in *.apk *.apks; do
+        [ -e "$f" ] || continue
+        if [ -n "$1" ] && { [ -e "$1/$(module_of "$f").apk" ] || [ -e "$1/$(module_of "$f").apks" ]; }; then
+            echo "   $1/ replaces $f" >&2; continue
+        fi
+        echo "$f"
+    done
+    [ -n "$1" ] || return 0
+    for f in "$1"/*.apk "$1"/*.apks; do [ -e "$f" ] && echo "$f"; done
+    return 0
+}
+
+generate() { # output dir, overlay dir ("" for the shared output)
+OUTPUT_DIR=$1
+HIDE_LINES=""
+mapfile -t IN < <(inputs "$2")
+
+echo "🚀 Starting User APK extraction and conversion pipeline for $OUTPUT_DIR..."
 
 # 1. Initialize folders
-rm -rf "$OUTPUT_DIR"
+rm -rf "${OUTPUT_DIR:?}"
 mkdir -p "$OUTPUT_DIR/prebuilt"
 mkdir -p "$OUTPUT_DIR/sepolicy"
 
@@ -212,8 +248,8 @@ cat << 'EOF' > "$OUTPUT_DIR/sepolicy/file_contexts"
 EOF
 
 # 2. Process each APK in the current working directory
-for apk in *.apk; do
-    [ -e "$apk" ] || continue
+for apk in "${IN[@]}"; do
+    case "$apk" in *.apk) ;; *) continue ;; esac
     
     echo "------------------------------------------------"
     echo "🔍 Processing: $apk"
@@ -403,8 +439,8 @@ done
 # (confirmed 2026-08-27 on Gboard: a dangling drawable reference only resolved once the
 # matching density split was included). See build_gboard_apks.py for how a bundletool-
 # compatible toc.pb gets hand-built from loose split apks pulled out of an .apkm archive.
-for apkset in *.apks; do
-    [ -e "$apkset" ] || continue
+for apkset in "${IN[@]}"; do
+    case "$apkset" in *.apks) ;; *) continue ;; esac
 
     echo "------------------------------------------------"
     echo "🔍 Processing: $apkset"
@@ -658,3 +694,10 @@ EOF
 
 echo "------------------------------------------------"
 echo "✅ Success! Copy the generated '$OUTPUT_DIR' folder straight into your LineageOS root source tree."
+}
+
+generate extra-apps ""
+for v in "${VARIANTS[@]}"; do
+    [ -d "$v" ] || { echo "❌ Error: variant dir $v/ missing"; exit 1; }
+    generate "extra-apps-$v" "$v"
+done
