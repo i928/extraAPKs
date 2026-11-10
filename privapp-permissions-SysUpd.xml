@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Platform privileged permissions that the CURRENT Play versions of these
+  Google system apps request and the ROM's allowlists (vendor/google/crosshatch,
+  vendor/gapps) do not grant. Needed once the apps are baked into /product as
+  the SysUpd_* modules (~/extraAPKs/crosshatch/): with
+  ro.control_privapp_permissions=enforce, a non-updated privileged app asking for
+  an unlisted platform permission makes system_server throw at boot. As /data
+  updates they hold these already (updated system apps need no allowlist), so
+  this keeps them as they run today. Generated 2026-11-10 from aapt2 dump
+  permissions vs the phone's privapp-permissions xml.
+-->
+<permissions>
+    <privapp-permissions package="com.google.android.apps.carrier.carrierwifi">
+        <permission name="android.permission.WIFI_SET_DEVICE_MOBILITY_STATE"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.google.android.apps.restore">
+        <permission name="android.permission.ACCESS_LAUNCHER_DATA"/>
+        <permission name="android.permission.GET_ACCOUNTS_PRIVILEGED"/>
+        <permission name="android.permission.MODIFY_PHONE_STATE"/>
+        <permission name="android.permission.READ_WIFI_CREDENTIAL"/>
+        <permission name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.google.android.apps.wellbeing">
+        <permission name="android.permission.REBOOT"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.google.android.as.oss">
+        <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.google.android.euicc">
+        <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"/>
+        <permission name="android.permission.MANAGE_SUBSCRIPTION_PLANS"/>
+        <permission name="android.permission.READ_NETWORK_USAGE_HISTORY"/>
+        <permission name="android.permission.READ_SUBSCRIPTION_PLANS"/>
+        <permission name="android.permission.REAL_GET_TASKS"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.google.android.projection.gearhead">
+        <permission name="android.permission.POWER_SAVER"/>
+        <permission name="android.permission.TETHER_PRIVILEGED"/>
+        <permission name="android.permission.MANAGE_USERS"/>
+        <permission name="android.permission.BIND_APPWIDGET"/>
+    </privapp-permissions>
+</permissions>

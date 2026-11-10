@@ -38,11 +38,29 @@ DEX_PREOPT_DISABLED=("freenovel" "sogou" "Gboard" "message" "kasa" "reddit" "tet
 # role is systemOnly, so a user-app File Manager+ never competes for it.
 declare -A OVERRIDES_APPS=(["Gboard"]="LatinIME" ["message"]="messaging")
 
+# SysUpd_<module> (crosshatch/ only): the current Play version of a Google
+# system app, replacing the ROM's older copy of the same package, module
+# <module> from vendor/google/crosshatch or vendor/gapps (2026-11-10, phase 1 in
+# ~/ksu/crosshatch-performance-scope.md). Each overrides that module, keeps its
+# priv-app status, and the platform permissions the newer versions request
+# beyond the ROM allowlists are in privapp-permissions-SysUpd.xml.
+declare -A PRIVILEGED_APPS=()
+for m in MobileFeliCaMenuMainApp MobileFeliCaSettingApp MobileFeliCaClient \
+         MobileFeliCaWebPluginBoot PixelCameraServicesCrosshatch talkback; do
+    OVERRIDES_APPS[SysUpd_$m]=$m
+done
+for m in CarrierServices CarrierWifi EuiccGoogle DeviceIntelligenceNetworkPrebuilt \
+         GoogleRestore Wellbeing AndroidAutoStub; do
+    OVERRIDES_APPS[SysUpd_$m]=$m
+    PRIVILEGED_APPS[SysUpd_$m]=1
+done
+
 # Modules needing a /product/etc/permissions/privapp-permissions-*.xml allowlist
 # (required for ANY privileged app requesting signature|privileged permissions --
 # without this the permissions are silently denied even if privileged:true).
 # Maps module name -> xml filename in this directory.
-declare -A PRIVAPP_PERMISSIONS_XML=(["Gboard"]="privapp-permissions-gboard.xml")
+declare -A PRIVAPP_PERMISSIONS_XML=(["Gboard"]="privapp-permissions-gboard.xml"
+    ["SysUpd_EuiccGoogle"]="privapp-permissions-SysUpd.xml")
 # NOTE: compile_multilib has no effect on android_app_import (no compilation happens for a
 # prebuilt import -- confirmed 2026-08-27 while diagnosing MtManager, which still crashed
 # with this set). Kept only for Gboard since it's part of the already-confirmed-working
