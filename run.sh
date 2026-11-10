@@ -46,11 +46,12 @@ declare -A OVERRIDES_APPS=(["Gboard"]="LatinIME" ["message"]="messaging")
 # beyond the ROM allowlists are in privapp-permissions-SysUpd.xml.
 declare -A PRIVILEGED_APPS=()
 for m in MobileFeliCaMenuMainApp MobileFeliCaSettingApp MobileFeliCaClient \
-         MobileFeliCaWebPluginBoot PixelCameraServicesCrosshatch talkback; do
+         MobileFeliCaWebPluginBoot PixelCameraServicesCrosshatch talkback \
+         SpeechServicesByGoogle; do
     OVERRIDES_APPS[SysUpd_$m]=$m
 done
 for m in CarrierServices CarrierWifi EuiccGoogle DeviceIntelligenceNetworkPrebuilt \
-         GoogleRestore Wellbeing AndroidAutoStub; do
+         GoogleRestore Wellbeing AndroidAutoStub DevicePersonalizationPrebuiltPixel3; do
     OVERRIDES_APPS[SysUpd_$m]=$m
     PRIVILEGED_APPS[SysUpd_$m]=1
 done
