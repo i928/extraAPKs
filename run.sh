@@ -660,6 +660,14 @@ cat << 'EOF' > "$OUTPUT_DIR/scripts/install-apps.sh"
 # Run on every boot by ksu-autoinstall.sh. Each apk is installed once per wipe
 # (marker in /data/adb); a failed install retries on the next boot. An app the
 # user already has at the same or a newer version counts as done.
+#
+# The official KernelSU manager (KernelSUNext-official*.apk) is the exception:
+# the kernel of a build that ships it trusts only that signature, so a copy of
+# the same package signed with another key (left from an older build) cannot
+# manage KernelSU and only blocks the install. It is removed and replaced; only
+# the manager's own settings go, root grants and modules live in /data/adb.
+# Phones that already recorded the blocked install as done get one more try
+# (.sigfix marker).
 (
 SRC=/product/etc/install-apps
 STATE=/data/adb/.ksu-autoinstall
@@ -673,7 +681,14 @@ mkdir -p "$STATE" || exit 0
 
 pending=0
 for apk in "$SRC"/*.apk; do
-	[ -f "$STATE/userapp-${apk##*/}.done" ] || pending=$((pending + 1))
+	n=${apk##*/}
+	if [ ! -f "$STATE/userapp-$n.done" ]; then
+		pending=$((pending + 1))
+	else
+		case "$n" in KernelSUNext-official*)
+			[ -f "$STATE/userapp-$n.sigfix" ] || pending=$((pending + 1)) ;;
+		esac
+	fi
 done
 [ "$pending" -gt 0 ] || exit 0
 
@@ -687,13 +702,35 @@ log "[USER APPS] Installing $pending app(s) from $SRC..."
 for apk in "$SRC"/*.apk; do
 	[ -f "$apk" ] || continue
 	name=${apk##*/}
-	[ -f "$STATE/userapp-$name.done" ] && continue
+	official=0
+	case "$name" in KernelSUNext-official*) official=1 ;; esac
+	if [ -f "$STATE/userapp-$name.done" ]; then
+		[ "$official" = 1 ] && [ ! -f "$STATE/userapp-$name.sigfix" ] || continue
+	fi
 	out=$(pm install -r --user 0 "$apk" 2>&1)
+	if [ "$official" = 1 ]; then
+		case "$out" in *UPDATE_INCOMPATIBLE*)
+			pkg=$(echo "$out" | sed -n 's/.*Existing package \([A-Za-z0-9._]*\) signatures.*/\1/p' | head -n 1)
+			[ -n "$pkg" ] || pkg=com.rifsxd.ksunext
+			log "[USER APP] $name: $pkg is signed with another key, replacing it: $(pm uninstall "$pkg" 2>&1)"
+			out=$(pm install -r --user 0 "$apk" 2>&1) ;;
+		esac
+	fi
 	case "$out" in
 		*Success*)
 			: > "$STATE/userapp-$name.done"
+			[ "$official" = 1 ] && : > "$STATE/userapp-$name.sigfix"
 			log "[USER APP] Installed $name" ;;
 		*VERSION_DOWNGRADE*|*UPDATE_INCOMPATIBLE*)
+			if [ "$official" = 1 ]; then
+				case "$out" in
+				*UPDATE_INCOMPATIBLE*)
+					# could not remove the other copy: try again next boot
+					log "[FAILED] User app $name: $out"
+					continue ;;
+				esac
+				: > "$STATE/userapp-$name.sigfix"
+			fi
 			: > "$STATE/userapp-$name.done"
 			log "[USER APP] $name: user already has its own install ($out)" ;;
 		*)
